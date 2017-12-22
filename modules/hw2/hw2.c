@@ -1,17 +1,19 @@
-#include <linux/module.h>
 #include <linux/kernel.h>
+#include <linux/module.h>
 #include <linux/init.h>
-#include <linux/proc_fs.h>
-#include <linux/netdevice.h>
 #include <linux/netfilter.h>
 #include <linux/netfilter_ipv4.h>
+#include <linux/netdevice.h>
 #include <linux/skbuff.h>
+#include <linux/udp.h>
+#include <linux/if_ether.h>
 #include <linux/ip.h>
-#include <linux/tcp.h>
+#include <linux/ipv6.h>
+#include <linux/in.h>
 
+MODULE_LICENSE("GPL");
 MODULE_AUTHOR("KU");
 MODULE_DESCRIPTION("System_Programming_hw2");
-MODULE_LICENSE("GPL");
 MODULE_VERSION("NEW");
 
 #define TO_OCTAT(addr) \
@@ -20,140 +22,160 @@ MODULE_VERSION("NEW");
     ((unsigned char *)&addr)[2], \
     ((unsigned char *)&addr)[3]
 
-struct nf_hook_ops nfho_pre_route;
-struct nf_hook_ops nfho_post_route;
-struct nf_hook_ops nfho_forward;
+static struct nf_hook_ops nfho;
+static struct nf_hook_ops nfho2;
+static struct nf_hook_ops nfho3;
+struct sk_buff *sock_buff;
 
-static void setProtocol(char* str, unsigned int protocol) {
-  switch (protocol) {
-  case IPPROTO_ICMP:
-    strcpy(str, "ICMP");
-    break;
-  case IPPROTO_IGMP:
-    strcpy(str, "IGMP");
-    break;
+unsigned int
+hookfn(const struct nf_hook_ops *ops, struct sk_buff *skb,
+       const struct net_device *in, const struct net_device *out,
+       int (*okfn) (struct sk_buff *))
+{
+    uint8_t proto;
+    struct ethhdr *eth;
+	struct iphdr *ipv4h;
+	struct tcphdr *tcp_h;
+	unsigned int saddr, daddr;
+	unsigned int sport, dport;
+	unsigned char temp[4] = {100, 1, 1, 0};
+	unsigned int tmp_addr;
 
-  case IPPROTO_TCP:
-    strcpy(str, "TCP");
-    break;
-
-  case IPPROTO_UDP:
-    strcpy(str, "UDP");
-    break;
-
-  default:
-    str = "ERROR";
-  }
-
-  return;
-}
-
-unsigned int hw2_hook_fn(void* priv,
-                         struct sk_buff *skb,
-                         const struct nf_hook_state *state) {
-    struct iphdr *ip_header;
-    struct tcphdr *tcp_header;
-    struct sk_buff *sock_buff;
-    unsigned int saddr, daddr;
-    unsigned int sport, dport;
-    char proto[20] ={0};
-
-    memset(proto, 0, 128);
+	if (!skb)
+		return NF_ACCEPT;
 
 
-    sock_buff = skb;
-
-    // no header
-    if (!sock_buff) {
-      return NF_ACCEPT;
+    eth = (struct ethhdr *)skb_mac_header(skb);
+    if(ETH_P_IP == ntohs(eth->h_proto))
+    {
+	    ipv4h = (struct iphdr *) skb_network_header(skb);
+		proto = ipv4h->protocol;
+		saddr = (unsigned int)ipv4h->saddr;
+    	daddr = (unsigned int)ipv4h->daddr;
+        if(proto == IPPROTO_TCP){
+			tcp_h = tcp_hdr(skb);
+			sport = htons((unsigned short int) tcp_h->source);
+			if(sport == 33333){
+				memcpy(&tmp_addr, temp, sizeof(temp));
+				ipv4h->daddr = tmp_addr;
+				tcp_h->source = ntohs(7777);
+				tcp_h->dest = ntohs(7777);
+			}
+			daddr = (unsigned int)ipv4h->daddr;
+			sport = htons((unsigned short int) tcp_h->source);
+		    dport = htons((unsigned short int) tcp_h->dest);
+			printk("PRE_ROUTING[IPPROTO_TCP;%u;%u;%u.%u.%u.%u;%u.%u.%u.%u]\n",
+       			 sport, dport, TO_OCTAT(saddr), TO_OCTAT(daddr));
+			
+		}
     }
 
-    ip_header = (struct iphdr *)skb_network_header(sock_buff);
-
-    // no IP header
-    if (!ip_header) {
-      return NF_ACCEPT;
-    }
-
-    // not TCP
-    if(ip_header->protocol!=IPPROTO_TCP) {
-      return NF_ACCEPT;
-    }
-
-    setProtocol(proto, ip_header->protocol);
-
-    saddr = (unsigned int)ip_header->saddr;
-    daddr = (unsigned int)ip_header->daddr;
-
-    tcp_header = tcp_hdr(sock_buff);
-    sport = htons((unsigned short int) tcp_header->source);
-    dport = htons((unsigned short int) tcp_header->dest);
-
-    // action depending on hook pos
-    switch (state->hook) {
-    // forwarding
-    case NF_INET_PRE_ROUTING:
-      printk(KERN_INFO "POST_ROUTING[%s;%d;%d;%d.%d.%d.%d;%d.%d.%d.%d]\n",
-        proto, sport, dport, TO_OCTAT(saddr), TO_OCTAT(daddr));
-      if (dport == 33333) {
-        tcp_header->dest = 7777;
-      }
-      break;
-
-    // monitoring
-    case NF_INET_POST_ROUTING:
-      printk(KERN_INFO "POST_ROUTING[%s;%d;%d;%d.%d.%d.%d;%d.%d.%d.%d]\n",
-        proto, sport, dport, TO_OCTAT(saddr), TO_OCTAT(daddr));
-      break;
-
-    // monitoring
-    case NF_INET_FORWARD:
-      printk(KERN_INFO "POST_ROUTING[%s;%d;%d;%d.%d.%d.%d;%d.%d.%d.%d]\n",
-        proto, sport, dport, TO_OCTAT(saddr), TO_OCTAT(daddr));
-      break;
-
-    default:
-      break;
-    }
-    printk(KERN_INFO "TCP ports: source: %d, dest: %d \n", sport, dport);
-    printk(KERN_INFO "SKBuffer: len %d, data_len %d\n", sock_buff->len, sock_buff->data_len);
-
-    return NF_ACCEPT;
+	return NF_ACCEPT;
 }
 
-static int __init hw2_init(void) {
-    // PRE_ROUNTING HOOK
-    nfho_pre_route.hook = hw2_hook_fn;
-    nfho_pre_route.hooknum = NF_INET_PRE_ROUTING;
-    nfho_pre_route.pf = PF_INET;
-    nfho_pre_route.priority = NF_IP_PRI_FIRST;
-    // (unsigned int)nfho_pre_route.priv = NF_INET_PRE_ROUTING;
-    nf_register_hook(&nfho_pre_route);
+unsigned int
+hookfn2(const struct nf_hook_ops *ops, struct sk_buff *skb,
+       const struct net_device *in, const struct net_device *out,
+       int (*okfn) (struct sk_buff *))
+{
+    uint8_t proto;
+    struct ethhdr *eth;
+	struct iphdr *ipv4h;
+	struct tcphdr *tcp_h;
+	unsigned int saddr, daddr;
+	unsigned int sport, dport;
 
-    // POST_ROUTING HOOK
-    nfho_post_route.hook = hw2_hook_fn;
-    nfho_post_route.hooknum = NF_INET_POST_ROUTING;
-    nfho_post_route.pf = PF_INET;
-    nfho_post_route.priority = NF_IP_PRI_FIRST;
-    // (unsigned int)nfho_post_route.priv = NF_INET_POST_ROUTING;
-    nf_register_hook(&nfho_post_route);
+	if (!skb)
+		return NF_ACCEPT;
 
-    // FORWARD HOOK
-    nfho_forward.hook = hw2_hook_fn;
-    nfho_forward.hooknum = NF_INET_FORWARD;
-    nfho_forward.pf = PF_INET;
-    nfho_forward.priority = NF_IP_PRI_FIRST;
-    // (unsigned int)nfho_forward.priv = NF_INET_FORWARD;
-    nf_register_hook(&nfho_forward);
 
-    return 0;
+    eth = (struct ethhdr *)skb_mac_header(skb);
+    if(ETH_P_IP == ntohs(eth->h_proto))
+    {
+	    ipv4h = (struct iphdr *) skb_network_header(skb);
+		proto = ipv4h->protocol;
+		saddr = (unsigned int)ipv4h->saddr;
+    	daddr = (unsigned int)ipv4h->daddr;
+        if(proto == IPPROTO_TCP){
+			tcp_h = tcp_hdr(skb);
+			sport = htons((unsigned short int) tcp_h->source);
+		    dport = htons((unsigned short int) tcp_h->dest);
+			printk("FOWRAD[IPPROTO_TCP;%u;%u;%u.%u.%u.%u;%u.%u.%u.%u]\n",
+       			 sport, dport, TO_OCTAT(saddr), TO_OCTAT(daddr));
+		}
+    }
+
+	return NF_ACCEPT;
 }
 
-static void __exit hw2_exit(void) {
-    nf_unregister_hook(&nfho_pre_route);
-    nf_unregister_hook(&nfho_post_route);
-    nf_unregister_hook(&nfho_forward);
+
+unsigned int
+hookfn3(const struct nf_hook_ops *ops, struct sk_buff *skb,
+       const struct net_device *in, const struct net_device *out,
+       int (*okfn) (struct sk_buff *))
+{
+    uint8_t proto;
+    struct ethhdr *eth;
+	struct iphdr *ipv4h;
+	struct tcphdr *tcp_h;
+	unsigned int saddr, daddr;
+	unsigned int sport, dport;
+
+	if (!skb)
+		return NF_ACCEPT;
+
+
+    eth = (struct ethhdr *)skb_mac_header(skb);
+    if(ETH_P_IP == ntohs(eth->h_proto))
+    {
+	    ipv4h = (struct iphdr *) skb_network_header(skb);
+		proto = ipv4h->protocol;
+		saddr = (unsigned int)ipv4h->saddr;
+    	daddr = (unsigned int)ipv4h->daddr;
+        if(proto == IPPROTO_TCP){
+			tcp_h = tcp_hdr(skb);
+			sport = htons((unsigned short int) tcp_h->source);
+		    dport = htons((unsigned short int) tcp_h->dest);
+			printk("POST_ROUTING[IPPROTO_TCP;%u;%u;%u.%u.%u.%u;%u.%u.%u.%u]\n",
+       			 sport, dport, TO_OCTAT(saddr), TO_OCTAT(daddr));
+		}
+    }
+
+	return NF_ACCEPT;
 }
 
-module_init(hw2_init);
-module_exit(hw2_exit);
+static int __init hook_init(void)
+{
+	nfho.hook = hookfn;
+	nfho.hooknum = NF_INET_PRE_ROUTING;
+	nfho.pf = PF_INET;
+	nfho.priority = NF_IP_PRI_FIRST;
+
+	nf_register_hook(&nfho);
+	
+	nfho2.hook = hookfn2;
+	nfho2.hooknum = NF_INET_FORWARD;
+	nfho2.pf = PF_INET;
+	nfho2.priority = NF_IP_PRI_FIRST;
+
+	nf_register_hook(&nfho2);
+
+	nfho3.hook = hookfn3;
+	nfho3.hooknum = NF_INET_POST_ROUTING;
+	nfho3.pf = PF_INET;
+	nfho3.priority = NF_IP_PRI_FIRST;
+
+	nf_register_hook(&nfho3);
+
+	return 0;
+}
+
+static void __exit hook_exit(void)
+{
+	nf_unregister_hook(&nfho);
+	nf_unregister_hook(&nfho2);
+	nf_unregister_hook(&nfho3);
+}
+
+module_init(hook_init);
+module_exit(hook_exit);
