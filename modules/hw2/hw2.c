@@ -9,31 +9,36 @@
 #include <linux/ip.h>
 #include <linux/tcp.h>
 
+MODULE_AUTHOR("KU");
+MODULE_DESCRIPTION("System_Programming_hw2");
+MODULE_LICENSE("GPL");
+MODULE_VERSION("NEW");
+
 #define TO_OCTAT(addr) \
     ((unsigned char *)&addr)[0], \
     ((unsigned char *)&addr)[1], \
     ((unsigned char *)&addr)[2], \
     ((unsigned char *)&addr)[3]
 
-static struct nf_hook_ops nfho_pre_route;
-static struct nf_hook_ops nfho_post_route;
-static struct nf_hook_ops nfho_forward;
+struct nf_hook_ops nfho_pre_route;
+struct nf_hook_ops nfho_post_route;
+struct nf_hook_ops nfho_forward;
 
 static void setProtocol(char* str, unsigned int protocol) {
   switch (protocol) {
   case IPPROTO_ICMP:
-    str = "ICMP";
+    strcpy(str, "ICMP");
     break;
   case IPPROTO_IGMP:
-    str = "ICMP";
+    strcpy(str, "IGMP");
     break;
 
   case IPPROTO_TCP:
-    str = "ICMP";
+    strcpy(str, "TCP");
     break;
 
   case IPPROTO_UDP:
-    str = "ICMP";
+    strcpy(str, "UDP");
     break;
 
   default:
@@ -43,17 +48,18 @@ static void setProtocol(char* str, unsigned int protocol) {
   return;
 }
 
-unsigned int hw2_hook_fn(unsigned int hooknum,
-                       struct sk_buff **skb,
-                       const struct net_device *in,
-                       const struct net_device *out,
-                       int (*okfn)(struct sk_buff *)) {
+unsigned int hw2_hook_fn(void* priv,
+                         struct sk_buff *skb,
+                         const struct nf_hook_state *state) {
     struct iphdr *ip_header;
     struct tcphdr *tcp_header;
     struct sk_buff *sock_buff;
     unsigned int saddr, daddr;
     unsigned int sport, dport;
-    char proto[20];
+    char proto[20] ={0};
+
+    memset(proto, 0, 128);
+
 
     sock_buff = skb;
 
@@ -76,15 +82,15 @@ unsigned int hw2_hook_fn(unsigned int hooknum,
 
     setProtocol(proto, ip_header->protocol);
 
-    saddr = (unsigned int)ip_header->s_addr;
-    daddr = (unsigned int)ip_header->d_addr;
+    saddr = (unsigned int)ip_header->saddr;
+    daddr = (unsigned int)ip_header->daddr;
 
     tcp_header = tcp_hdr(sock_buff);
     sport = htons((unsigned short int) tcp_header->source);
     dport = htons((unsigned short int) tcp_header->dest);
 
     // action depending on hook pos
-    switch (hooknum) {
+    switch (state->hook) {
     // forwarding
     case NF_INET_PRE_ROUTING:
       printk(KERN_INFO "POST_ROUTING[%s;%d;%d;%d.%d.%d.%d;%d.%d.%d.%d]\n",
@@ -121,6 +127,7 @@ static int __init hw2_init(void) {
     nfho_pre_route.hooknum = NF_INET_PRE_ROUTING;
     nfho_pre_route.pf = PF_INET;
     nfho_pre_route.priority = NF_IP_PRI_FIRST;
+    // (unsigned int)nfho_pre_route.priv = NF_INET_PRE_ROUTING;
     nf_register_hook(&nfho_pre_route);
 
     // POST_ROUTING HOOK
@@ -128,6 +135,7 @@ static int __init hw2_init(void) {
     nfho_post_route.hooknum = NF_INET_POST_ROUTING;
     nfho_post_route.pf = PF_INET;
     nfho_post_route.priority = NF_IP_PRI_FIRST;
+    // (unsigned int)nfho_post_route.priv = NF_INET_POST_ROUTING;
     nf_register_hook(&nfho_post_route);
 
     // FORWARD HOOK
@@ -135,6 +143,7 @@ static int __init hw2_init(void) {
     nfho_forward.hooknum = NF_INET_FORWARD;
     nfho_forward.pf = PF_INET;
     nfho_forward.priority = NF_IP_PRI_FIRST;
+    // (unsigned int)nfho_forward.priv = NF_INET_FORWARD;
     nf_register_hook(&nfho_forward);
 
     return 0;
